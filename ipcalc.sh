@@ -241,7 +241,7 @@ function_header()
 	echo "#                                               #"
 	echo "#                       by                      #"
 	echo "#                                               #"
-	echo "#               Marcus Kindermann               #"
+	echo "#                Owen Trafalgar                 #"
 	echo "#                                               #"
 
 }
