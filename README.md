@@ -1,6 +1,10 @@
 # ipcalc
 
-a simple IPv4 calculator
+## a simple IPv4 calculator
+
+This script calculates several values with the input
+of IP-address and subnetmask or IP-address and CIDR.
+see example below.
 
 ### syntax:
 ```
@@ -41,7 +45,9 @@ a simple IPv4 calculator
 #                                               #
 #################################################
 #                                               #
-# IP-Address:                   192.168.0.123   #
+# IP-Address:                   192.168.0.1     #
+# IP-Class:                     C               #
+# Use Case:                     Private         #
 # Netmask:                      255.255.255.0   #
 # CIDR Suffix:                  24              #
 # Wildcard:                     0.0.0.255       #

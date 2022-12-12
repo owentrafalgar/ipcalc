@@ -84,6 +84,154 @@ function_ip()
 
 }
 
+function_class()
+{
+
+function_split $1
+case $octet1 in
+	[1-9]|[1-9][0-9]|1[0-2][0-7])
+		class=A
+	;;
+	12[8-9]|1[3-8][0-9]|19[0-1])
+		class=B
+	;;
+	19[2-9]|2[0-1][0-9]|22[0-3])
+		class=C
+	;;
+	22[4-9]|23[0-9])
+		class=D
+	;;
+	24[0-9]|25[0-5])
+		class=E
+	;;
+	*)
+		function_help
+		exit 1
+	;;
+esac
+}
+
+function_use()
+{
+
+function_split $1
+case $octet1 in
+	[1-9]|1[1-9]|[2-9][0-9]|1[0-2][0-6])
+		use=Public
+	;;
+	10)
+		use=Private
+	;;
+	127)
+		case $octet2 in
+			[1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])
+				use=Loopback
+			;;
+			0)
+				case $octet3 in
+		                        [1-9]|[1-9][0-9]|[1-2][0-4][0-9]|25[0-5])
+                		                use=Loopback
+                        		;;
+                        		0)
+						case $octet4 in
+							0|[2-9]|[1-9][0-9]|[1-2][0-4][0-9]|25[0-5])
+								use=Loopback
+							;;
+							1)
+								use=Localhost
+							;;
+							*)
+								function_help
+								exit 1
+							;;
+						esac
+					;;
+					*)
+						function_help
+						exit 1
+					;;
+				esac
+			;;
+			*)
+				function_help
+				exit 1
+			;;
+		esac
+	;;
+	12[8-9]|1[3-6][0-9]|17[0-1]|17[3-9]|18[0-9]|19[0-1])
+		use=Public
+	;;
+	172)
+		case $octet2 in
+			[0-9]|1[0-5]|3[2-9]|[4-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])
+				use=Public
+			;;
+			1[6-9]|2[0-9]|3[0-1])
+				use=Private
+			;;
+			*)
+				function_help
+				exit 1
+			;;
+		esac
+	;;
+	192)
+		use=Private
+	;;
+	19[3-9]|2[0-1][0-9]|22[0-3])
+		use=Public
+	;;
+	22[4-9]|23[0-9])
+		use=Multicast
+	;;
+	24[0-9]|25[0-4])
+		use=Reserved
+	;;
+	255)
+		case $octet2 in
+			[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-4])
+				use=Reserved
+			;;
+			255)
+				case $octet3 in
+					[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-4])
+						use=Reserved
+					;;
+					255)
+						case $octet4 in
+							[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-4])
+								use=Reserved
+							;;
+							255)
+								use=Broadcast
+							;;
+							*)
+								function_help
+                                                                function_help
+                                                                exit 1
+                                                        ;;
+                                                esac
+                                        ;;
+                                        *)
+                                                function_help
+                                                exit 1
+                                        ;;
+                                esac
+                        ;;
+                        *)
+                                function_help
+                                exit 1
+                        ;;
+                esac
+        ;;
+	*)
+		function_help
+		exit 1
+	;;
+esac
+
+}
+
 function_mask()
 {
 
@@ -274,6 +422,8 @@ function_output()
 	echo "#################################################"
 	echo "#                                               #"
 	echo "# IP-Address:                   $ip$(function_space $ip)#"
+	echo "# IP-Class:                     $class$(function_space $class)#"
+	echo "# Use Case:                     $use$(function_space $use)#"
 	echo "# Netmask:                      $mask$(function_space $mask)#"
 	echo "# CIDR Suffix:                  $cidr$(function_space $cidr)#"
 	echo "# Wildcard:                     $wildcard$(function_space $wildcard)#"
@@ -290,6 +440,8 @@ function_output()
 }
 
 function_ip $1
+function_class $1
+function_use $1
 function_mask $1 $2
 function_cidr $1 $2
 function_wildcard $mask
