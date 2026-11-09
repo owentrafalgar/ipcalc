@@ -6,6 +6,24 @@ This script calculates several values with the input
 of IP-address and subnetmask or IP-address and CIDR.
 see example below.
 
+It is written in pure bash and needs no external tools.
+
+### calculated values
+
+- IP-Class (A-E)
+- Use Case: Public, Private (RFC 1918), Loopback, Localhost, Link-Local,
+  Shared (CGNAT, RFC 6598), This Network (0.0.0.0/8), Multicast,
+  Reserved (240.0.0.0/4) and Broadcast (255.255.255.255)
+- Netmask, CIDR suffix and wildcard mask
+- Network address and broadcast address
+- Number of IP-addresses and possible hosts
+  (/31 and /32 are handled according to RFC 3021)
+- First and last host IP
+
+Invalid input (malformed IP-address, non-contiguous netmask, CIDR > 32,
+or CIDR and netmask given at the same time) prints the syntax help and
+exits with status 1.
+
 ### syntax:
 ```
 #################################################
@@ -45,7 +63,7 @@ see example below.
 #                                               #
 #################################################
 #                                               #
-# IP-Address:                   192.168.0.1     #
+# IP-Address:                   192.168.0.123   #
 # IP-Class:                     C               #
 # Use Case:                     Private         #
 # Netmask:                      255.255.255.0   #

@@ -1,381 +1,182 @@
 #!/bin/bash
 
+# IPv4 calculator: prints network details for an IP address given either
+# with a CIDR suffix (192.168.0.1/24) or with a netmask (192.168.0.1 255.255.255.0).
+# Pure bash, no external tools required.
+
 # global variables
 
-regex_start="^"
-regex_end="$"
-regex_ip="(([0-9])|([1-9][0-9])|(1[0-9][0-9])|(2[0-4][0-9])|25[0-5])\.(([0-9])|([1-9][0-9])|(1[0-9][0-9])|(2[0-4][0-9])|25[0-5])\.(([0-9])|([1-9][0-9])|(1[0-9][0-9])|(2[0-4][0-9])|25[0-5])\.(([0-9])|([1-9][0-9])|(1[0-9][0-9])|(2[0-4][0-9])|25[0-5])"
-regex_cidr_slash="\/"
-regex_cidr="(([0-9])|([1-2][0-9])|(3[0-2]))"
-regex_mask="(((255\.){3}(255|254|252|248|240|224|192|128+))|((255\.){2}(255|254|252|248|240|224|192|128|0+)\.0)|((255\.)(255|254|252|248|240|224|192|128|0+)(\.0+){2})|((255|254|252|248|240|224|192|128|0+)(\.0+){3}))"
+regex_octet="(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])"
+regex_ip="$regex_octet(\.$regex_octet){3}"
+regex_cidr="(3[0-2]|[1-2][0-9]|[0-9])"
 
 # helper functions
 
-function_split()
+# dotted decimal -> 32-bit integer (sets: int)
+function_ip2int()
 {
 
-	octet1=$(echo $1 | cut -d"." -f1)
-	octet2=$(echo $1 | cut -d"." -f2)
-	octet3=$(echo $1 | cut -d"." -f3)
-	octet4=$(echo $1 | cut -d"." -f4)
+	local o1 o2 o3 o4
+	IFS=. read -r o1 o2 o3 o4 <<< "$1"
+	int=$(( (o1 << 24) | (o2 << 16) | (o3 << 8) | o4 ))
 
 }
 
-function_dec2bin()
+# 32-bit integer -> dotted decimal (sets: dec)
+function_int2ip()
 {
 
-	function_split $1
-	octet_bin1=$(printf "%08d\n" $(echo "obase=2; $((octet1))" | bc))
-	octet_bin2=$(printf "%08d\n" $(echo "obase=2; $((octet2))" | bc))
-	octet_bin3=$(printf "%08d\n" $(echo "obase=2; $((octet3))" | bc))
-	octet_bin4=$(printf "%08d\n" $(echo "obase=2; $((octet4))" | bc))
+	dec="$(( ($1 >> 24) & 255 )).$(( ($1 >> 16) & 255 )).$(( ($1 >> 8) & 255 )).$(( $1 & 255 ))"
 
 }
 
-function_bin2dec()
+# prefix length -> 32-bit netmask integer (sets: prefix_mask)
+function_prefix2int()
 {
 
-	octet_bin1=$(echo $1 | cut -c-8)
-	octet_bin2=$(echo $1 | cut -c9-16)
-	octet_bin3=$(echo $1 | cut -c17-24)
-	octet_bin4=$(echo $1 | cut -c25-32)
-	octet_dec1=$(echo "$((2#$octet_bin1))")
-	octet_dec2=$(echo "$((2#$octet_bin2))")
-	octet_dec3=$(echo "$((2#$octet_bin3))")
-	octet_dec4=$(echo "$((2#$octet_bin4))")
-	dec=$(echo $octet_dec1.$octet_dec2.$octet_dec3.$octet_dec4)
+	prefix_mask=$(( (0xFFFFFFFF << (32 - $1)) & 0xFFFFFFFF ))
 
 }
 
-function_dec2bit()
+# succeeds if $ip_int lies within network $1 with prefix length $2
+function_in_net()
 {
 
-	function_dec2bin $1
-	octet_bit1=$(echo $octet_bin1 | grep -o '1' | grep -c .)
-	octet_bit2=$(echo $octet_bin2 | grep -o '1' | grep -c .)
-	octet_bit3=$(echo $octet_bin3 | grep -o '1' | grep -c .)
-	octet_bit4=$(echo $octet_bin4 | grep -o '1' | grep -c .)
-	bit=$(echo $(( octet_bit1 + octet_bit2 + octet_bit3 + octet_bit4 ))| bc)
-
-}
-
-function_bit2dec()
-{
-
-	max_bit=32
-	zeros=$(echo $(( max_bit - cidr )) | bc)
-	bin=$(printf %$(echo $1)s |tr " " "1")$(printf %$(echo $zeros)s |tr " " "0")
-	function_bin2dec $bin
+	function_ip2int "$1"
+	function_prefix2int "$2"
+	(( (ip_int & prefix_mask) == int ))
 
 }
 
 # main functions
 
-function_ip()
+# validate arguments and set ip, ip_int, mask_int and cidr
+function_parse()
 {
 
-	if [[ $1 =~ $regex_start$regex_ip$regex_cidr_slash$regex_cidr$regex_end ]] || [[ $1 =~ $regex_start$regex_ip$regex_end ]]
+	if [[ $# -eq 1 && $1 =~ ^$regex_ip/$regex_cidr$ ]]
 	then
-		ip=$(echo $1 | cut -d"/" -f1)
+		ip=${1%/*}
+		cidr=${1#*/}
+		function_prefix2int "$cidr"
+		mask_int=$prefix_mask
+	elif [[ $# -eq 2 && $1 =~ ^$regex_ip$ && $2 =~ ^$regex_ip$ ]]
+	then
+		ip=$1
+		function_ip2int "$2"
+		mask_int=$int
+
+		# a valid netmask is a block of ones followed only by zeros,
+		# i.e. its inverted value plus one must be a power of two
+		local inverted=$(( ~mask_int & 0xFFFFFFFF ))
+		if (( (inverted & (inverted + 1)) != 0 ))
+		then
+			function_help
+			exit 1
+		fi
+
+		cidr=32
+		for (( i = inverted; i > 0; i >>= 1 )); do
+			(( cidr-- ))
+		done
 	else
 		function_help
 		exit 1
 	fi
+
+	function_ip2int "$ip"
+	ip_int=$int
 
 }
 
 function_class()
 {
 
-function_split $1
-case $octet1 in
-	[1-9]|[1-9][0-9]|1[0-2][0-7])
-		class=A
-	;;
-	12[8-9]|1[3-8][0-9]|19[0-1])
-		class=B
-	;;
-	19[2-9]|2[0-1][0-9]|22[0-3])
-		class=C
-	;;
-	22[4-9]|23[0-9])
-		class=D
-	;;
-	24[0-9]|25[0-5])
-		class=E
-	;;
-	*)
-		function_help
-		exit 1
-	;;
-esac
+	local octet1=${ip%%.*}
+
+	if   (( octet1 < 128 )); then class=A
+	elif (( octet1 < 192 )); then class=B
+	elif (( octet1 < 224 )); then class=C
+	elif (( octet1 < 240 )); then class=D
+	else                          class=E
+	fi
+
 }
 
 function_use()
 {
 
-function_split $1
-case $octet1 in
-	[1-9]|1[1-9]|[2-9][0-9]|1[0-2][0-6])
-		use=Public
-	;;
-	10)
-		use=Private
-	;;
-	127)
-		case $octet2 in
-			[1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])
-				use=Loopback
-			;;
-			0)
-				case $octet3 in
-		                        [1-9]|[1-9][0-9]|[1-2][0-4][0-9]|25[0-5])
-                		                use=Loopback
-                        		;;
-                        		0)
-						case $octet4 in
-							0|[2-9]|[1-9][0-9]|[1-2][0-4][0-9]|25[0-5])
-								use=Loopback
-							;;
-							1)
-								use=Localhost
-							;;
-							*)
-								function_help
-								exit 1
-							;;
-						esac
-					;;
-					*)
-						function_help
-						exit 1
-					;;
-				esac
-			;;
-			*)
-				function_help
-				exit 1
-			;;
-		esac
-	;;
-	12[8-9]|1[3-6][0-9]|17[0-1]|17[3-9]|18[0-9]|19[0-1])
-		use=Public
-	;;
-	172)
-		case $octet2 in
-			[0-9]|1[0-5]|3[2-9]|[4-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])
-				use=Public
-			;;
-			1[6-9]|2[0-9]|3[0-1])
-				use=Private
-			;;
-			*)
-				function_help
-				exit 1
-			;;
-		esac
-	;;
-	192)
-		use=Private
-	;;
-	19[3-9]|2[0-1][0-9]|22[0-3])
-		use=Public
-	;;
-	22[4-9]|23[0-9])
-		use=Multicast
-	;;
-	24[0-9]|25[0-4])
-		use=Reserved
-	;;
-	255)
-		case $octet2 in
-			[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-4])
-				use=Reserved
-			;;
-			255)
-				case $octet3 in
-					[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-4])
-						use=Reserved
-					;;
-					255)
-						case $octet4 in
-							[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-4])
-								use=Reserved
-							;;
-							255)
-								use=Broadcast
-							;;
-							*)
-								function_help
-                                                                function_help
-                                                                exit 1
-                                                        ;;
-                                                esac
-                                        ;;
-                                        *)
-                                                function_help
-                                                exit 1
-                                        ;;
-                                esac
-                        ;;
-                        *)
-                                function_help
-                                exit 1
-                        ;;
-                esac
-        ;;
-	*)
-		function_help
-		exit 1
-	;;
-esac
-
-}
-
-function_mask()
-{
-
-	if [[ $2 =~ $regex_start$regex_mask$regex_end ]]
-	then
-		mask=$2
-	elif [[ $1 =~ $regex_start$regex_ip$regex_cidr_slash$regex_cidr$regex_end ]]
-	then
-		cidr=$(echo $1 | cut -d"/" -f2)
-		function_bit2dec $cidr
-		mask=$dec
-	else
-		function_help
-		exit 1
+	if   (( ip_int == 0xFFFFFFFF ));       then use="Broadcast"
+	elif (( ip_int == 0x7F000001 ));       then use="Localhost"
+	elif function_in_net 127.0.0.0 8;      then use="Loopback"
+	elif function_in_net 10.0.0.0 8 ||
+	     function_in_net 172.16.0.0 12 ||
+	     function_in_net 192.168.0.0 16;   then use="Private"
+	elif function_in_net 100.64.0.0 10;    then use="Shared (CGNAT)"
+	elif function_in_net 169.254.0.0 16;   then use="Link-Local"
+	elif function_in_net 0.0.0.0 8;        then use="This Network"
+	elif function_in_net 224.0.0.0 4;      then use="Multicast"
+	elif function_in_net 240.0.0.0 4;      then use="Reserved"
+	else                                        use="Public"
 	fi
 
 }
 
-function_cidr()
+function_calculate()
 {
 
-	if [[ $1 =~ $regex_start$regex_ip$regex_cidr_slash$regex_cidr$regex_end ]]
-	then
-		cidr=$(echo $1 | cut -d"/" -f2)
-	elif [[ $2 =~ $regex_start$regex_mask$regex_end ]]
-	then
-		function_dec2bit $2
-		cidr=$bit
-	else
-		function_help
-		exit 1
-	fi
+	function_int2ip "$mask_int"
+	mask=$dec
 
-}
+	wildcard_int=$(( ~mask_int & 0xFFFFFFFF ))
+	function_int2ip "$wildcard_int"
+	wildcard=$dec
 
-function_wildcard()
-{
-
-	function_split $1
-	wildcard_octet1=$(echo $(( 255 - octet1 ))| bc)
-	wildcard_octet2=$(echo $(( 255 - octet2 ))| bc)
-	wildcard_octet3=$(echo $(( 255 - octet3 ))| bc)
-	wildcard_octet4=$(echo $(( 255 - octet4 ))| bc)
-	wildcard=$(echo $wildcard_octet1.$wildcard_octet2.$wildcard_octet3.$wildcard_octet4)
-
-}
-
-function_net_addr()
-{
-
-	function_dec2bin $1
-	ip_bin=$(echo $octet_bin1$octet_bin2$octet_bin3$octet_bin4)
-
-	function_dec2bin $2
-	mask_bin=$(echo $octet_bin1$octet_bin2$octet_bin3$octet_bin4)
-
-	for (( i=0; i<32; i++ )); do
-		net_addr_arr[$i+1]=$(echo $(( ${ip_bin:$i:1} && ${mask_bin:$i:1} )) )
-	done
-
-	net_addr_bin=$(echo ${net_addr_arr[*]} | sed 's/ //g')
-	function_bin2dec $net_addr_bin
+	net_addr_int=$(( ip_int & mask_int ))
+	function_int2ip "$net_addr_int"
 	net_addr=$dec
 
-}
-
-function_broadcast()
-{
-
-	function_dec2bin $1
-	ip_bin=$(echo $octet_bin1$octet_bin2$octet_bin3$octet_bin4)
-
-	function_dec2bin $2
-	mask_bin=$(echo $octet_bin1$octet_bin2$octet_bin3$octet_bin4)
-
-	for (( i=0; i<32; i++ )); do
-		broadcast_arr[$i+1]=$(echo $(( ${ip_bin:$i:1} || ${mask_bin:$i:1} )) )
-	done
-
-	broadcast_bin=$(echo ${broadcast_arr[*]} | sed 's/ //g')
-	function_bin2dec $broadcast_bin
+	broadcast_int=$(( net_addr_int | wildcard_int ))
+	function_int2ip "$broadcast_int"
 	broadcast=$dec
 
-}
+	ip_number=$(( wildcard_int + 1 ))
 
-function_ip_number()
-{
-
-	function_dec2bin $1
-	mask_bin=$(echo $octet_bin1$octet_bin2$octet_bin3$octet_bin4)
-	mask_zeros=$(echo $mask_bin | grep -o '0' | grep -c .)
-	ip_number=$(echo 2 ^ $mask_zeros | bc)
-
-}
-
-function_host_number()
-{
-
-	if [[ $2 = 31 ]]
-	then
-		host_number=2
-	elif [[ $2 = 32 ]]
+	# /31 (point-to-point, RFC 3021) and /32 have no network/broadcast address
+	if (( cidr == 32 ))
 	then
 		host_number=1
+	elif (( cidr == 31 ))
+	then
+		host_number=2
 	else
-		host_number=$(echo $1 - 2 | bc)
+		host_number=$(( ip_number - 2 ))
 	fi
 
-}
-
-function_host_start()
-{
-
-	if [[ $2 -ge 31 ]]
+	if (( cidr >= 31 ))
 	then
-		host_start=$1
+		function_int2ip "$net_addr_int"
+		host_start=$dec
+		function_int2ip "$broadcast_int"
+		host_end=$dec
 	else
-		net_addr_octet4=$(echo $1 | cut -d"." -f4)
-		host_start_octet4=$(echo $net_addr_octet4 + 1 | bc)
-		host_start=$(echo $(echo $1 | cut -d"." -f-3).$host_start_octet4)
-	fi
-
-}
-
-function_host_end()
-{
-
-	if [[ $2 -ge 31 ]]
-	then
-	        host_end=$1
-	else
-	        broadcast_octet4=$(echo $1 | cut -d"." -f4)
-	        host_end_octet4=$(echo $broadcast_octet4 - 1 | bc)
-	        host_end=$(echo $(echo $1 | cut -d"." -f-3).$host_end_octet4)
+		function_int2ip $(( net_addr_int + 1 ))
+		host_start=$dec
+		function_int2ip $(( broadcast_int - 1 ))
+		host_end=$dec
 	fi
 
 }
 
 # graphical functions
 
+# pad a value to the width of the output box
 function_space()
 {
 
-	printf %$(echo $(echo 17 - $(echo $1 | wc -c)| bc))s |tr " " " "
+	local width=$(( 16 - ${#1} ))
+	(( width < 0 )) && width=0
+	printf '%*s' "$width" ""
 
 }
 
@@ -421,35 +222,26 @@ function_output()
 	function_header
 	echo "#################################################"
 	echo "#                                               #"
-	echo "# IP-Address:                   $ip$(function_space $ip)#"
-	echo "# IP-Class:                     $class$(function_space $class)#"
-	echo "# Use Case:                     $use$(function_space $use)#"
-	echo "# Netmask:                      $mask$(function_space $mask)#"
-	echo "# CIDR Suffix:                  $cidr$(function_space $cidr)#"
-	echo "# Wildcard:                     $wildcard$(function_space $wildcard)#"
-	echo "# Network Address:              $net_addr$(function_space $net_addr)#"
-	echo "# Broadcast:                    $broadcast$(function_space $broadcast)#"
-	echo "# Number of IP-Addresses:       $ip_number$(function_space $ip_number)#"
-	echo "# Number of possible Hosts:     $host_number$(function_space $host_number)#"
-	echo "# Host IP Start:                $host_start$(function_space $host_start)#"
-	echo "# Host IP End:                  $host_end$(function_space $host_end)#"
+	echo "# IP-Address:                   $ip$(function_space "$ip")#"
+	echo "# IP-Class:                     $class$(function_space "$class")#"
+	echo "# Use Case:                     $use$(function_space "$use")#"
+	echo "# Netmask:                      $mask$(function_space "$mask")#"
+	echo "# CIDR Suffix:                  $cidr$(function_space "$cidr")#"
+	echo "# Wildcard:                     $wildcard$(function_space "$wildcard")#"
+	echo "# Network Address:              $net_addr$(function_space "$net_addr")#"
+	echo "# Broadcast:                    $broadcast$(function_space "$broadcast")#"
+	echo "# Number of IP-Addresses:       $ip_number$(function_space "$ip_number")#"
+	echo "# Number of possible Hosts:     $host_number$(function_space "$host_number")#"
+	echo "# Host IP Start:                $host_start$(function_space "$host_start")#"
+	echo "# Host IP End:                  $host_end$(function_space "$host_end")#"
 	echo "#                                               #"
 	echo "#################################################"
 	echo ""
 
 }
 
-function_ip $1
-function_class $1
-function_use $1
-function_mask $1 $2
-function_cidr $1 $2
-function_wildcard $mask
-function_net_addr $ip $mask
-function_broadcast $ip $wildcard
-function_ip_number $mask
-function_host_number $ip_number $cidr
-function_host_start $net_addr $cidr
-function_host_end $broadcast $cidr
-
+function_parse "$@"
+function_class
+function_use
+function_calculate
 function_output
